@@ -16,6 +16,7 @@ const ENTITY_REFERENCE_KEY =
   "http://fise.iks-project.eu/ontology/entity-reference";
 const ENTITY_LABEL_KEY = "http://fise.iks-project.eu/ontology/entity-label";
 const RELATION_KEY = "http://purl.org/dc/terms/relation";
+const ANNOTATION_TYPE_KEY = "http://purl.org/dc/terms/type";
 const TYPE_KEY = "http://fise.iks-project.eu/ontology/entity-type";
 const CONFIDENCE_KEY = "http://fise.iks-project.eu/ontology/confidence";
 const TEXT_ANNOTATIONS_KEY =
@@ -24,22 +25,28 @@ const SELECTED_TEXT_KEY = "http://fise.iks-project.eu/ontology/selected-text";
 const START_KEY = "http://fise.iks-project.eu/ontology/start";
 const END_KEY = "http://fise.iks-project.eu/ontology/end";
 const ENHANCEMENT_KEY = "http://fise.iks-project.eu/ontology/Enhancement";
+const DEPICTION_KEY = "http://xmlns.com/foaf/0.1/depiction";
 
 const allOfType = (result, type) =>
   result.filter((i) => i["@type"].includes(type));
+
+const allOfResource = (graph, resource, propertyPath) => {
+  const items = graph.filter((g) => g["@id"] === resource);
+  return propertyPath ? items.map((i) => i[propertyPath]) : items;
+};
 
 const getUri = (annotation) => annotation?.["@id"];
 
 const getValue = (annotation) => annotation?.["@value"];
 
-const getType = (annotation) => {
-  const types = annotation[TYPE_KEY];
+const getType = (annotation, type = TYPE_KEY) => {
+  const types = annotation[type];
   for (const ann of types) {
     if (ann["@id"] === "http://dbpedia.org/ontology/Place") {
       return "place";
     } else if (ann["@id"] === "http://dbpedia.org/ontology/Person") {
       return "person";
-    } else if (ann["@id"] === "http://schema.org/Organization") {
+    } else if (ann["@id"] === "http://dbpedia.org/ontology/Organisation") {
       return "organization";
     }
   }
@@ -60,9 +67,13 @@ export default function Index({
   const [err, setErr] = useState("");
   const [stanbolResults, setStanbolResults] = useState();
   const [textAnnotations, setTextAnnotations] = useState([]);
-  const [enhancements, setEnhancements] = useState({});
+  const [entityAnnotations, setEntityAnnotations] = useState({});
+  const [isLoading, setIsLoading] = useState(false);
 
-  const enhanceText = useCallback(async () => {
+  const generateTags = useCallback(async () => {
+    setTextAnnotations([]);
+    setEntityAnnotations([]);
+    setIsLoading(true);
     try {
       const response = await fetch(
         `http://localhost:1337/stanbol-generator/enhance-text`,
@@ -88,22 +99,23 @@ export default function Index({
       textAnnotationsResult.forEach((annotation) => {
         const selectedText = annotation[SELECTED_TEXT_KEY];
         if (selectedText) {
-          const name = annotation["@id"];
-          const start = annotation[START_KEY][0]["@value"];
-          const end = annotation[END_KEY][0]["@value"];
-          const text = annotation[SELECTED_TEXT_KEY][0]["@value"];
-          //const type = getType(annotation[TYPE_KEY]);
+          const annotation_name = getUri(annotation);
+          const start = getValue(annotation[START_KEY][0]);
+          const end = getValue(annotation[END_KEY][0]);
+          const text = getValue(annotation[SELECTED_TEXT_KEY][0]);
+          const annotation_type = getType(annotation, ANNOTATION_TYPE_KEY);
           const confidence = annotation[CONFIDENCE_KEY];
           setTextAnnotations((prev) => [
             ...prev,
             {
-              name,
+              name: annotation_name,
               start,
               end,
               text,
               confidence,
               selectedText,
               annotation,
+              type: annotation_type,
             },
           ]);
         }
@@ -111,24 +123,24 @@ export default function Index({
 
       const enhancementsResult = allOfType(result, ENHANCEMENT_KEY);
 
-      console.log(enhancementsResult)
-
       enhancementsResult.forEach((enhancement) => {
         const entityReference = enhancement[ENTITY_REFERENCE_KEY];
         if (entityReference) {
-          const entity_text_annotations = enhancement[RELATION_KEY];
-          entity_text_annotations.forEach((entity_text_annotation) => {
+          const entity_annotations = enhancement[RELATION_KEY];
+          entity_annotations.forEach((entity_annotation) => {
             const entityObj = {
               entity_ref: getUri(enhancement),
               entity_type: getType(enhancement),
               entity_name: getValue(enhancement[ENTITY_LABEL_KEY]?.[0]),
+              entity_resource: getUri(entityReference[0]),
+              entity_enhancement: enhancement,
             };
-            const entity_text_annotation_uri = getUri(entity_text_annotation);
-            if (entity_text_annotation_uri) {
-              setEnhancements((prev) => ({
+            const entity_annotation_uri = getUri(entity_annotation);
+            if (entity_annotation_uri) {
+              setEntityAnnotations((prev) => ({
                 ...prev,
-                [entity_text_annotation_uri]: prev[entity_text_annotation_uri]
-                  ? [...prev[entity_text_annotation_uri], entityObj]
+                [entity_annotation_uri]: prev[entity_annotation_uri]
+                  ? [...prev[entity_annotation_uri], entityObj]
                   : [entityObj],
               }));
             }
@@ -146,6 +158,8 @@ export default function Index({
       if (err?.message) {
         setErr(err.message);
       }
+    } finally {
+      setIsLoading(false);
     }
   }, [setStanbolResults, onChange, prompt]);
 
@@ -153,7 +167,7 @@ export default function Index({
     onChange({ target: { name, value: "", type: attribute.type } });
   };
 
-  console.log({textAnnotations}, {enhancements})
+  console.log({ textAnnotations }, { entityAnnotations });
 
   return (
     <Stack spacing={4}>
@@ -166,12 +180,27 @@ export default function Index({
         className="stanbol-prompt"
       />
       <Stack horizontal spacing={4}>
-        <Button onClick={() => enhanceText()}>Generate</Button>
+        <Button onClick={() => generateTags()} loading={isLoading}>
+          Generate
+        </Button>
         <Button onClick={() => clearGeneratedText()}>Clear</Button>
+        {stanbolResults && !!textAnnotations?.length && (
+          <Button
+            onClick={() => enhanceText()}
+            //style={{ background: "#66b7f1", border: "none" }}
+            disabled={!textAnnotations.filter((t) => t.selected).length}
+          >
+            Enhance with selected entities
+          </Button>
+        )}
       </Stack>
       {stanbolResults && (
         <>
           <Typography variant="beta">Recognized Entities</Typography>
+          <Typography variant={""}>
+            Select entities to create link, then click on "Enhance with selected
+            entities"
+          </Typography>
           <Box
             style={{
               display: "inline-flex",
@@ -181,7 +210,21 @@ export default function Index({
           >
             {textAnnotations?.length ? (
               textAnnotations.map((w) => (
-                <Tag key={w.name} onClick={(e) => console.log(e)}>
+                <Tag
+                  key={w.name}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setTextAnnotations((prev) =>
+                      prev.map((t) =>
+                        t.name === w.name ? { ...t, selected: !t.selected } : t
+                      )
+                    );
+                  }}
+                  style={{
+                    background: w.selected && "#66b7f1",
+                    color: w.selected && "#fff",
+                  }}
+                >
                   {w.text}
                 </Tag>
               ))
