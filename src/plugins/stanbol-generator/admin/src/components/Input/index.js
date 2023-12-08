@@ -12,7 +12,9 @@ import {
 import { auth } from "@strapi/helper-plugin";
 import "./style.css";
 
-const ENTITY_REFERENCE_KEY = "http://fise.iks-project.eu/ontology/entity-reference";
+const ENTITY_REFERENCE_KEY =
+  "http://fise.iks-project.eu/ontology/entity-reference";
+const ENTITY_LABEL_KEY = "http://fise.iks-project.eu/ontology/entity-label";
 const RELATION_KEY = "http://purl.org/dc/terms/relation";
 const TYPE_KEY = "http://fise.iks-project.eu/ontology/entity-type";
 const CONFIDENCE_KEY = "http://fise.iks-project.eu/ontology/confidence";
@@ -21,12 +23,17 @@ const TEXT_ANNOTATIONS_KEY =
 const SELECTED_TEXT_KEY = "http://fise.iks-project.eu/ontology/selected-text";
 const START_KEY = "http://fise.iks-project.eu/ontology/start";
 const END_KEY = "http://fise.iks-project.eu/ontology/end";
-const ENHANCEMENT_KEY = 'http://fise.iks-project.eu/ontology/Enhancement'
+const ENHANCEMENT_KEY = "http://fise.iks-project.eu/ontology/Enhancement";
 
 const allOfType = (result, type) =>
   result.filter((i) => i["@type"].includes(type));
 
-const getType = (types) => {
+const getUri = (annotation) => annotation?.["@id"];
+
+const getValue = (annotation) => annotation?.["@value"];
+
+const getType = (annotation) => {
+  const types = annotation[TYPE_KEY];
   for (const ann of types) {
     if (ann["@id"] === "http://dbpedia.org/ontology/Place") {
       return "place";
@@ -53,7 +60,7 @@ export default function Index({
   const [err, setErr] = useState("");
   const [stanbolResults, setStanbolResults] = useState();
   const [textAnnotations, setTextAnnotations] = useState([]);
-  const [enhancements, setEnhancements] = useState([]);
+  const [enhancements, setEnhancements] = useState({});
 
   const enhanceText = useCallback(async () => {
     try {
@@ -84,10 +91,7 @@ export default function Index({
           const name = annotation["@id"];
           const start = annotation[START_KEY][0]["@value"];
           const end = annotation[END_KEY][0]["@value"];
-          const text =
-            annotation[SELECTED_TEXT_KEY][0][
-              "@value"
-            ];
+          const text = annotation[SELECTED_TEXT_KEY][0]["@value"];
           //const type = getType(annotation[TYPE_KEY]);
           const confidence = annotation[CONFIDENCE_KEY];
           setTextAnnotations((prev) => [
@@ -107,13 +111,30 @@ export default function Index({
 
       const enhancementsResult = allOfType(result, ENHANCEMENT_KEY);
 
-      enhancementsResult.forEach(enhancement => {
-        const entityReference = enhancement[ENTITY_REFERENCE_KEY]
-        if(entityReference){
-          console.log({enhancement})
-          //debugger;
+      console.log(enhancementsResult)
+
+      enhancementsResult.forEach((enhancement) => {
+        const entityReference = enhancement[ENTITY_REFERENCE_KEY];
+        if (entityReference) {
+          const entity_text_annotations = enhancement[RELATION_KEY];
+          entity_text_annotations.forEach((entity_text_annotation) => {
+            const entityObj = {
+              entity_ref: getUri(enhancement),
+              entity_type: getType(enhancement),
+              entity_name: getValue(enhancement[ENTITY_LABEL_KEY]?.[0]),
+            };
+            const entity_text_annotation_uri = getUri(entity_text_annotation);
+            if (entity_text_annotation_uri) {
+              setEnhancements((prev) => ({
+                ...prev,
+                [entity_text_annotation_uri]: prev[entity_text_annotation_uri]
+                  ? [...prev[entity_text_annotation_uri], entityObj]
+                  : [entityObj],
+              }));
+            }
+          });
         }
-      })
+      });
 
       setStanbolResults(result);
 
@@ -132,7 +153,7 @@ export default function Index({
     onChange({ target: { name, value: "", type: attribute.type } });
   };
 
-  console.log({textAnnotations});
+  console.log({textAnnotations}, {enhancements})
 
   return (
     <Stack spacing={4}>
