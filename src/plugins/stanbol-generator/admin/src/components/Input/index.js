@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 import {
   Stack,
@@ -7,16 +7,33 @@ import {
   Box,
   Typography,
   Tag,
-  Loader,
+  Card,
+  CardHeader,
+  CardBody,
+  CardCheckbox,
+  CardAction,
+  CardAsset,
+  CardTimer,
+  CardContent,
+  CardBadge,
+  CardTitle,
+  CardSubtitle,
+  IconButton,
 } from "@strapi/design-system";
 import { auth } from "@strapi/helper-plugin";
 import "./style.css";
+
+const EntityType = {
+  Organisation: "http://dbpedia.org/ontology/Organisation",
+  Place: "http://dbpedia.org/ontology/Place",
+  Person: "http://dbpedia.org/ontology/Person",
+};
 
 const ENTITY_REFERENCE_KEY =
   "http://fise.iks-project.eu/ontology/entity-reference";
 const ENTITY_LABEL_KEY = "http://fise.iks-project.eu/ontology/entity-label";
 const RELATION_KEY = "http://purl.org/dc/terms/relation";
-const ANNOTATION_TYPE_KEY = "http://purl.org/dc/terms/type";
+const ENTITY_TYPE_KEY = "http://purl.org/dc/terms/type";
 const TYPE_KEY = "http://fise.iks-project.eu/ontology/entity-type";
 const CONFIDENCE_KEY = "http://fise.iks-project.eu/ontology/confidence";
 const TEXT_ANNOTATIONS_KEY =
@@ -94,6 +111,8 @@ export default function Index({
 
       const result = await response.json();
 
+      // move next code to a custom function
+      // START
       const textAnnotationsResult = allOfType(result, TEXT_ANNOTATIONS_KEY);
 
       textAnnotationsResult.forEach((annotation) => {
@@ -103,7 +122,6 @@ export default function Index({
           const start = getValue(annotation[START_KEY][0]);
           const end = getValue(annotation[END_KEY][0]);
           const text = getValue(annotation[SELECTED_TEXT_KEY][0]);
-          const annotation_type = getType(annotation, ANNOTATION_TYPE_KEY);
           const confidence = annotation[CONFIDENCE_KEY];
           setTextAnnotations((prev) => [
             ...prev,
@@ -115,7 +133,6 @@ export default function Index({
               confidence,
               selectedText,
               annotation,
-              type: annotation_type,
             },
           ]);
         }
@@ -123,36 +140,56 @@ export default function Index({
 
       const enhancementsResult = allOfType(result, ENHANCEMENT_KEY);
 
-      enhancementsResult.forEach((enhancement) => {
-        const entityReference = enhancement[ENTITY_REFERENCE_KEY];
-        if (entityReference) {
-          const entity_annotations = enhancement[RELATION_KEY];
-          entity_annotations.forEach((entity_annotation) => {
+      enhancementsResult.forEach((annotation) => {
+        const enhancementEntityRef = annotation[ENTITY_REFERENCE_KEY];
+        if (enhancementEntityRef) {
+          const relatedAnnotations = annotation[RELATION_KEY];
+          relatedAnnotations.forEach((relatedAnnotation) => {
+            const entityRefUri = getUri(enhancementEntityRef[0]);
             const entityObj = {
-              entity_ref: getUri(enhancement),
-              entity_type: getType(enhancement),
-              entity_name: getValue(enhancement[ENTITY_LABEL_KEY]?.[0]),
-              entity_resource: getUri(entityReference[0]),
-              entity_enhancement: enhancement,
+              entityResource: result.find((r) => r["@id"] === entityRefUri),
+              entityRef: entityRefUri,
+              entityType: annotation[TYPE_KEY],
+              entityLabel: getValue(annotation[ENTITY_LABEL_KEY]?.[0]),
             };
-            const entity_annotation_uri = getUri(entity_annotation);
-            if (entity_annotation_uri) {
-              setEntityAnnotations((prev) => ({
-                ...prev,
-                [entity_annotation_uri]: prev[entity_annotation_uri]
-                  ? [...prev[entity_annotation_uri], entityObj]
-                  : [entityObj],
-              }));
+            const relatedAnnotationId = getUri(relatedAnnotation);
+            if (relatedAnnotationId) {
+              setEntityAnnotations((prev) => {
+                if (prev[relatedAnnotationId]) {
+                  return {
+                    ...prev,
+                    [relatedAnnotationId]: {
+                      ...prev[relatedAnnotationId],
+                      related: [
+                        ...prev[relatedAnnotationId].related,
+                        entityObj,
+                      ],
+                    },
+                  };
+                } else {
+                  return {
+                    ...prev,
+                    [relatedAnnotationId]: {
+                      resource: result.find(
+                        (r) => r["@id"] === getUri(relatedAnnotation)
+                      ),
+                      related: [entityObj],
+                    },
+                  };
+                }
+              });
             }
           });
         }
       });
+      // END
 
       setStanbolResults(result);
 
       onChange({
         target: { name, value: JSON.stringify(result), type: attribute.type },
       });
+
     } catch (err) {
       console.log(err);
       if (err?.message) {
@@ -167,7 +204,33 @@ export default function Index({
     onChange({ target: { name, value: "", type: attribute.type } });
   };
 
-  console.log({ textAnnotations }, { entityAnnotations });
+  const places = useMemo(
+    () =>
+      Object.values(entityAnnotations).filter((e) =>
+        e.resource[ENTITY_TYPE_KEY]?.some((t) => t["@id"] === EntityType.Place)
+      ),
+    [entityAnnotations]
+  );
+
+  const orgs = useMemo(
+    () =>
+      Object.values(entityAnnotations).filter((e) =>
+        e.resource[ENTITY_TYPE_KEY]?.some(
+          (t) => t["@id"] === EntityType.Organisation
+        )
+      ),
+    [entityAnnotations]
+  );
+
+  const people = useMemo(
+    () =>
+      textAnnotations.filter((a) =>
+        a.annotation[ENTITY_TYPE_KEY]?.some((t) => t["@id"] === EntityType.Person)
+      ),
+    [textAnnotations]
+  );
+
+  console.log({ places }, { people }, { orgs });
 
   return (
     <Stack spacing={4}>
@@ -232,24 +295,39 @@ export default function Index({
               <Button disabled>No Stanbol Tag</Button>
             )}
           </Box>
-          <Typography variant="beta">Places</Typography>
-          <Box
-            style={{
-              display: "inline-flex",
-              flexWrap: "wrap",
-              gap: 8,
-            }}
-          >
-            {textAnnotations?.length ? (
-              textAnnotations.map((w) => (
-                <Tag key={w.name} onClick={(e) => console.log(e)}>
-                  {w.text}
-                </Tag>
-              ))
-            ) : (
-              <Button disabled>No Stanbol Tag</Button>
-            )}
-          </Box>
+          {places?.length && (
+            <>
+              <Typography variant="beta">Places</Typography>
+              <Box
+                style={{
+                  display: "inline-flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                }}
+              >
+                {places.map((w) => (
+                  <Card
+                    style={{
+                      width: 150,
+                    }}
+                    key={w.name}
+                  >
+                    <CardHeader>
+                      <CardAsset src={"/first.jpg"} />
+                      <CardTimer>05:39</CardTimer>
+                    </CardHeader>
+                    <CardBody>
+                      <CardContent>
+                        <CardTitle>{w.text}</CardTitle>
+                        <CardSubtitle>PNG - 400✕400</CardSubtitle>
+                      </CardContent>
+                      <CardBadge>Doc</CardBadge>
+                    </CardBody>
+                  </Card>
+                ))}
+              </Box>
+            </>
+          )}
           <Textarea
             placeholder="Generated text"
             label="Response"
